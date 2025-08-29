@@ -1,0 +1,185 @@
+<!-- PowerToFly -- DESKTOP ONLY (GIF on last slide, positioned + square) -->
+<style>
+@media (max-width: 767px){ #ppt1-desktop { display:none !important; } }
+</style>
+
+<div id="ppt1-desktop" style="width:800px;margin:0 auto;">
+  <iframe
+    width="800" height="450"
+    style="border:0;display:block;background:transparent"
+    allow="fullscreen" allowfullscreen
+    sandbox="allow-scripts allow-same-origin allow-pointer-lock"
+    srcdoc='
+<!doctype html><html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;height:100%;background:transparent}
+  /* fill the iframe (which is 800×450) */
+  #stage{position:relative;width:100%;height:100%;overflow:hidden;background:transparent;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #cv{position:absolute;inset:0;display:block;width:100%;height:100%;background:transparent}
+
+  /* HUD */
+  #hud{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);
+       display:flex;gap:8px;align-items:center;padding:4px 8px;border-radius:6px;
+       background:#111;color:#fff;font:500 13px/1.1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;z-index:6}
+  #hud .b{width:26px;height:26px;line-height:26px;border:0;border-radius:6px;cursor:pointer;
+          background:#2a2a2a;color:#fff;font-size:15px}
+  #hud .b:disabled{opacity:.38;cursor:not-allowed}
+  #hud .info{min-width:64px;text-align:center}
+  #fs{position:absolute;top:10px;right:10px;z-index:7;width:28px;height:28px;line-height:28px;border:0;
+      border-radius:6px;cursor:pointer;background:#111;color:#fff;font-size:14px}
+  #fs:hover{background:#2a2a2a}
+
+  /* 🎬 GIF overlay (LAST page only) -- your final values */
+  :root{
+    --slot-x: 585px;  /* left  */
+    --slot-y:   0px;  /* top   */
+    --slot-w: 215px;  /* width */
+    --slot-h: 215px;  /* height (square) */
+  }
+  #overlay{ position:absolute; inset:0; z-index:5; pointer-events:none; display:none; }
+  #overlay .slot{ position:absolute; left:var(--slot-x); top:var(--slot-y); width:var(--slot-w); height:var(--slot-h); }
+  #overlay .slot img{ width:100%; height:100%; object-fit:cover; image-rendering:auto; } /* no distortion, square crop */
+</style>
+</head><body>
+  <div id="stage" aria-label="PDF viewer">
+    <button id="fs" title="Fullscreen">⤢</button>
+    <canvas id="cv"></canvas>
+
+    <!-- animated GIF (last slide only) -->
+    <div id="overlay">
+      <div class="slot">
+        <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExZW50d3FsamZpd2czaHowcmJmYjQzanBwZXl1YnVuNmh3aDZ2ankzdyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/l2QZP5YgopO6oLv9e/giphy.gif" alt="">
+      </div>
+    </div>
+
+    <div id="hud">
+      <button id="prev" class="b" title="Previous">‹</button>
+      <span id="info" class="info">--</span>
+      <button id="next" class="b" title="Next">›</button>
+      <button id="restart" class="b" title="Restart">↺</button>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+  <script>
+  (function(){
+    const PDF_URL = "https://raw.githubusercontent.com/kabosmonalisa/pdf/main/PowerToFly_%20The%20Funnel%20Fix%20(22).pdf?v="+Date.now();
+
+    const USE_WORKER = false; /* sandbox-safe */
+    if (USE_WORKER) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+
+    const stage   = document.getElementById("stage");
+    const canvas  = document.getElementById("cv");
+    const ctx     = canvas.getContext("2d",{alpha:true});
+    const prev    = document.getElementById("prev");
+    const next    = document.getElementById("next");
+    const restart = document.getElementById("restart");
+    const info    = document.getElementById("info");
+    const fs      = document.getElementById("fs");
+    const overlay = document.getElementById("overlay");
+
+    const DPR_BASE = Math.min(window.devicePixelRatio||1, 2);
+    let pdfDoc=null, page=1, task=null, queued=null;
+
+    function pageDPR(n){ return (n>=21) ? Math.min(DPR_BASE,1.4) : DPR_BASE; }
+    function ui(){
+      info.textContent = page+" / "+(pdfDoc?pdfDoc.numPages:"--");
+      prev.disabled = page<=1;
+      next.disabled = !pdfDoc || page >= pdfDoc.numPages; /* navigation works until last page */
+      overlay.style.display = (pdfDoc && page===pdfDoc.numPages) ? "block" : "none";
+    }
+
+    async function waitForSize(timeoutMs=2000){
+      const t0 = performance.now();
+      return new Promise(res=>{
+        (function loop(){
+          const w=stage.clientWidth, h=stage.clientHeight;
+          if (w>2 && h>2) return res();
+          if (performance.now()-t0>timeoutMs) return res();
+          requestAnimationFrame(loop);
+        })();
+      });
+    }
+
+    async function load(){
+      await waitForSize();
+      try{
+        pdfDoc = await pdfjsLib.getDocument({ url: PDF_URL, disableRange: true, disableWorker: !USE_WORKER }).promise;
+      }catch{
+        pdfDoc = await pdfjsLib.getDocument({ url: PDF_URL, disableRange: true, disableWorker: true }).promise;
+      }
+      ui(); render(page);
+    }
+
+    function render(n, attempt=0){
+      if (!pdfDoc) return;
+      if (task){ queued=n; try{task.cancel();}catch{}; return; }
+
+      pdfDoc.getPage(n).then(p=>{
+        const sw = stage.clientWidth, sh = stage.clientHeight;
+        const dpr = pageDPR(n);
+
+        canvas.width  = Math.max(1, Math.floor(sw*dpr));
+        canvas.height = Math.max(1, Math.floor(sh*dpr));
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+
+        const base   = p.getViewport({ scale: 1 });
+        const scale  = Math.min(sw/base.width, sh/base.height) * dpr;
+        const dw     = base.width * scale;
+        const dh     = base.height * scale;
+        const offX   = Math.floor((sw*dpr - dw)/2);
+        const offY   = Math.floor((sh*dpr - dh)/2);
+
+        task = p.render({ canvasContext: ctx, viewport: base, transform:[scale,0,0,scale,offX,offY], background:"rgba(0,0,0,0)" });
+        return task.promise;
+      }).then(()=>{
+        task=null; ui();
+        if (queued!==null){ const q=queued; queued=null; render(q); }
+      }).catch(e=>{
+        task=null;
+        if (e && e.name==="RenderingCancelledException"){
+          if (!attempt) return setTimeout(()=>render(n,1),80);
+        } else {
+          if (!attempt) return setTimeout(()=>render(n,1),80);
+        }
+        if (queued!==null){ const q=queued; queued=null; render(q); }
+      });
+    }
+
+    function queue(n){ if (task){ queued=n; try{task.cancel();}catch{}; } else { render(n); } }
+
+    prev.onclick    = ()=>{ if(page>1){ page--; queue(page);} };
+    next.onclick    = ()=>{ if(pdfDoc && page<pdfDoc.numPages){ page++; queue(page);} };
+    restart.onclick = ()=>{ page=1; queue(page); };
+    fs.onclick      = async()=>{ try{ if(!document.fullscreenElement){ await stage.requestFullscreen(); } else { await document.exitFullscreen(); } }catch{} };
+
+    load();
+  })();
+  </script>
+</body></html>
+  '></iframe>
+</div>
+
+/* Fullscreen button — solid, always visible */
+html body [id^="pdfx"] .fs{
+  position: absolute !important; top: 10px !important; right: 10px !important; z-index: 7 !important;
+  width: 28px !important; height: 28px !important; line-height: 28px !important;
+  border: 0 !important; border-radius: 6px !important; cursor: pointer !important;
+  background: #1f1f1f !important; color: #fff !important; font-size: 14px !important;
+}
+html body [id^="pdfx"] .fs:hover{ background: #2a2a2a !important; }
+
+/* Safety: don't let global styles shrink images/canvases inside */
+html body [id^="pdfx"] canvas, html body [id^="pdfx"] img{ max-width: none !important; }
+
+/* Optional: tone down offsets on tablets/phones */
+@media (max-width: 1100px){
+  html body [id^="pdfx"] .stage{ --pull: 1.2; }
+}
+@media (max-width: 768px){
+  html body [id^="pdfx"] .stage{ --pull: 0; --tweak: 0px; width: 100% !important; height: auto !important; }
+}
+
